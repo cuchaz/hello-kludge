@@ -52,7 +52,12 @@ tasks {
 				.forEach { file ->
 					exec {
 						this.workingDir = workingDir
-						commandLine("glslangValidator", "-V", file.absolutePath)
+						commandLine(
+							"glslangValidator",
+							"-V",
+							"-o", "${file.name}.spv",
+							file.absolutePath
+						)
 					}
 				}
 		}
