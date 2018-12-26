@@ -79,13 +79,7 @@ fun main(args: Array<String>) {
 		// build the swapchain
 		// TODO: cleanup this API?
 		val swapchain = device.physicalDevice.swapchainSupport(surface).run {
-
-			// TEMP
-			println(capabilities)
-			println("surface format: $surfaceFormats")
-			println("present mode: $presentModes")
-
-			return@run swapchain(
+			swapchain(
 				device,
 				surfaceFormat = pickSurfaceFormat(Format.B8G8R8A8_UNORM, ColorSpace.SRGB_NONLINEAR),
 				presentMode = pickPresentMode(
@@ -96,22 +90,15 @@ fun main(args: Array<String>) {
 			)
 		}.autoClose(autoCloser)
 
-		// TEMP
-		println("swapchain!")
-		for (image in swapchain.images) {
-			println("\timage: $image")
-			image.view(Image.ViewType.TwoD, swapchain.surfaceFormat.format).use { view ->
-				println("\t\tview: $view")
-			}
-		}
-
 		// get some shaders
 		val vertShader = device.shaderModule(Paths.get("build/shaders/shader.vert.spv")).autoClose(autoCloser)
 		val fragShader = device.shaderModule(Paths.get("build/shaders/shader.frag.spv")).autoClose(autoCloser)
-		println("vertex shader: $vertShader")
-		println("fragment shader: $fragShader")
 
 		// make the graphics pipeline
+		val rect = Rect2D(
+			offset = Offset2D(0, 0),
+			extent = swapchain.extent
+		)
 		val graphicsPipeline = device.graphicsPipeline(
 			stages = listOf(
 				vertShader.Stage("main", IntFlags.of(ShaderStage.Vertex)),
@@ -125,10 +112,7 @@ fun main(args: Array<String>) {
 				swapchain.extent.width.toFloat(),
 				swapchain.extent.height.toFloat()
 			)),
-			scissors = listOf(Rect2D(
-				offset = Offset2D(0, 0),
-				extent = swapchain.extent
-			)),
+			scissors = listOf(rect),
 			attachments = listOf(
 				AttachmentDescription(
 					format = swapchain.surfaceFormat.format,
@@ -141,18 +125,86 @@ fun main(args: Array<String>) {
 			subpasses = listOf(
 				Subpass(
 					pipelineBindPoint = Subpass.PipelineBindPoint.Graphics,
-					colorAttachments = listOf(AttachmentReference(0, ImageLayout.ColorAttachmentOptimal)) // TODO: make references easy
+					colorAttachments = listOf(
+						AttachmentReference(0, ImageLayout.ColorAttachmentOptimal)
+					) // TODO: make references easy
+				)
+			),
+			subpassDependencies =  listOf(
+				SubpassDependency(
+					srcSubpass = SubpassDependency.External,
+					dstSubpass = 0,
+					srcStageMask = IntFlags.of(PipelineStage.ColorAttachmentOutput),
+					dstStageMask = IntFlags.of(PipelineStage.ColorAttachmentOutput),
+					srcAccessMask = IntFlags(0),
+					dstAccessMask = IntFlags.of(AccessFlags.ColorAttachmentRead, AccessFlags.ColorAttachmentWrite)
 				)
 			)
 		).autoClose(autoCloser)
 
+		// make one framebuffer for each swapchain image
+		val framebuffers = swapchain.images.map { image ->
+			val imageView = image.view(Image.ViewType.TwoD, swapchain.surfaceFormat.format)
+				.autoClose(autoCloser)
+			device.framebuffer(
+				graphicsPipeline,
+				listOf(imageView),
+				width = swapchain.extent.width,
+				height = swapchain.extent.height,
+				layers = 1
+			).autoClose(autoCloser)
+		}
+
+		val commandPool = device.commandPool(graphicsFamily).autoClose(autoCloser)
+
+		// make a graphics command buffer for each framebuffer
+		val commandBuffers = framebuffers.map { framebuffer ->
+			commandPool.buffer().apply {
+				begin(IntFlags.of(CommandBuffer.UsageFlags.SimultaneousUse))
+				beginRenderPass(
+					graphicsPipeline,
+					framebuffer,
+					rect,
+					ClearValue(1.0f, 1.0f, 1.0f) // TODO: only blue channel is coming through here!!
+				)
+				bind(graphicsPipeline)
+				draw(3, 1)
+				endRenderPass()
+				end()
+			}
+		}
+
+		val imageAvailable = device.semaphore().autoClose(autoCloser)
+		val renderFinished = device.semaphore().autoClose(autoCloser)
+
 		// main loop
 		while (!win.shouldClose()) {
 
-			// TODO: render something
-
 			Windows.pollEvents()
+
+			// finally!! render something!! =D =D =D
+			val imageIndex = swapchain.acquireNextImage(imageAvailable)
+			graphicsQueue.submit(
+				imageAvailable,
+				IntFlags.of(PipelineStage.ColorAttachmentOutput),
+				commandBuffers[imageIndex],
+				renderFinished
+			)
+			surfaceQueue.present(
+				renderFinished,
+				swapchain,
+				imageIndex
+			)
+			surfaceQueue.waitForIdle()
+
+			// TEMP
+			Thread.sleep(100)
+
+			// TODO: measure FPS?
 		}
+
+		// wait for the device to finish before cleaning up
+		device.waitForIdle()
 	}
 
 	// cleanup
