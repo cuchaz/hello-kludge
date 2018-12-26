@@ -28,7 +28,8 @@ fun main(args: Array<String>) {
 			layerNames = setOf(Vulkan.StandardValidationLayer)
 		).autoClose(autoCloser)
 
-		val debug = vulkan.debugMessager(
+		// listen to debug messages
+		vulkan.debugMessager(
 			desiredSeverities = IntFlags.of(
 				DebugMessager.Severity.Error,
 				DebugMessager.Severity.Warning,
@@ -40,26 +41,28 @@ fun main(args: Array<String>) {
 
 		vulkan.debugInfo("Debug message!")
 
-		// print device info
+		// TEMP: print device info
 		for (device in vulkan.physicalDevices) {
 			println("device: $device")
 			println("extensions: ${device.extensionNames}")
 			device.queueFamilies.forEach { println("\t$it") }
 		}
 
+		// make a window
 		val win = Window(
 			size = Size(640, 480),
 			title = "Kludge Demo"
 		).autoClose(autoCloser)
-
 		win.centerOn(Monitors.primary)
 		win.visible = true
 
-		// make a surface
+		// make a surface for the window
 		val surface = vulkan.surface(win).autoClose(autoCloser)
 
 		// connect to a device
-		val physicalDevice = vulkan.physicalDevices[0]
+		val physicalDevice = vulkan.physicalDevices
+			.sortedBy { if (it.properties.type == PhysicalDevice.Type.DiscreteGpu) 0 else 1 }
+			.first()
 		val graphicsFamily = physicalDevice.findQueueFamily(IntFlags.of(PhysicalDevice.QueueFamily.Flags.Graphics))
 		val surfaceFamily = physicalDevice.findQueueFamily(surface)
 		val device = physicalDevice.device(
@@ -69,12 +72,11 @@ fun main(args: Array<String>) {
 			),
 			extensionNames = setOf(PhysicalDevice.SwapchainExtension)
 		).autoClose(autoCloser)
-
 		println("have a device!: $device")
 
+		// get device queues
 		val graphicsQueue = device.queues[graphicsFamily]!![0]
 		val surfaceQueue = device.queues[surfaceFamily]!![0]
-		println("have queues:\n\t$graphicsQueue\n\t$surfaceQueue")
 
 		// build the swapchain
 		// TODO: cleanup this API?
@@ -89,6 +91,7 @@ fun main(args: Array<String>) {
 				)
 			)
 		}.autoClose(autoCloser)
+		println("have a swapchain: ${swapchain.surfaceFormat} ${swapchain.presentMode}")
 
 		// get some shaders
 		val vertShader = device.shaderModule(Paths.get("build/shaders/shader.vert.spv")).autoClose(autoCloser)
@@ -114,7 +117,7 @@ fun main(args: Array<String>) {
 			)),
 			scissors = listOf(rect),
 			attachments = listOf(
-				AttachmentDescription(
+				AttachmentDescription( // TODO: clear color problem might be here?
 					format = swapchain.surfaceFormat.format,
 					loadOp = AttachmentDescription.LoadOp.Clear,
 					storeOp = AttachmentDescription.StoreOp.Store,
@@ -123,14 +126,14 @@ fun main(args: Array<String>) {
 			),
 			colorBlend = ColorBlendState(listOf(null)), // TODO: alpha blending?
 			subpasses = listOf(
-				Subpass(
+				Subpass( // TODO: clear color problem might be here?
 					pipelineBindPoint = Subpass.PipelineBindPoint.Graphics,
 					colorAttachments = listOf(
 						AttachmentReference(0, ImageLayout.ColorAttachmentOptimal)
 					) // TODO: make references easy
 				)
 			),
-			subpassDependencies =  listOf(
+			subpassDependencies = listOf(
 				SubpassDependency(
 					srcSubpass = SubpassDependency.External,
 					dstSubpass = 0,
@@ -146,7 +149,7 @@ fun main(args: Array<String>) {
 		val framebuffers = swapchain.images.map { image ->
 			val imageView = image.view(Image.ViewType.TwoD, swapchain.surfaceFormat.format)
 				.autoClose(autoCloser)
-			device.framebuffer(
+			return@map device.framebuffer(
 				graphicsPipeline,
 				listOf(imageView),
 				width = swapchain.extent.width,
@@ -158,17 +161,19 @@ fun main(args: Array<String>) {
 		val commandPool = device.commandPool(graphicsFamily).autoClose(autoCloser)
 
 		// make a graphics command buffer for each framebuffer
-		val commandBuffers = framebuffers.map { framebuffer ->
+		val commandBuffers = framebuffers.mapIndexed { index, framebuffer ->
+			val v = index*0.5f + 0.5f
 			commandPool.buffer().apply {
 				begin(IntFlags.of(CommandBuffer.UsageFlags.SimultaneousUse))
 				beginRenderPass(
 					graphicsPipeline,
 					framebuffer,
 					rect,
-					ClearValue(1.0f, 1.0f, 1.0f) // TODO: only blue channel is coming through here!!
+					ClearValue.Color.Float(v, v, v)
 				)
-				bind(graphicsPipeline)
-				draw(3, 1)
+				// TEMP
+				//bind(graphicsPipeline)
+				//draw(3, 1)
 				endRenderPass()
 				end()
 			}
