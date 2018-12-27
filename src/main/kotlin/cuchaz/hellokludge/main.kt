@@ -108,7 +108,7 @@ fun main(args: Array<String>) {
 				fragShader.Stage("main", IntFlags.of(ShaderStage.Fragment))
 			),
 			vertexInput = VertexInput(),
-			inputAssembly = InputAssembly(InputAssembly.Topology.TriangleList, false),
+			inputAssembly = InputAssembly(InputAssembly.Topology.TriangleList),
 			viewports = listOf(Viewport(
 				0.0f,
 				0.0f,
@@ -117,16 +117,29 @@ fun main(args: Array<String>) {
 			)),
 			scissors = listOf(rect),
 			attachments = listOf(
-				AttachmentDescription( // TODO: clear color problem might be here?
+				AttachmentDescription(
 					format = swapchain.surfaceFormat.format,
 					loadOp = AttachmentDescription.LoadOp.Clear,
 					storeOp = AttachmentDescription.StoreOp.Store,
 					finalLayout = ImageLayout.PresentSrc
 				)
 			),
-			colorBlend = ColorBlendState(listOf(null)), // TODO: alpha blending?
+			colorBlend = ColorBlendState(listOf(
+				ColorBlendState.Attachment(
+					color = ColorBlendState.Attachment.Part(
+						src = BlendFactor.One,
+						dst = BlendFactor.Zero,
+						op = BlendOp.Add
+					),
+					alpha = ColorBlendState.Attachment.Part(
+						src = BlendFactor.One,
+						dst = BlendFactor.Zero,
+						op = BlendOp.Add
+					)
+				)
+			)),
 			subpasses = listOf(
-				Subpass( // TODO: clear color problem might be here?
+				Subpass(
 					pipelineBindPoint = Subpass.PipelineBindPoint.Graphics,
 					colorAttachments = listOf(
 						AttachmentReference(0, ImageLayout.ColorAttachmentOptimal)
@@ -135,12 +148,16 @@ fun main(args: Array<String>) {
 			),
 			subpassDependencies = listOf(
 				SubpassDependency(
-					srcSubpass = SubpassDependency.External,
-					dstSubpass = 0,
-					srcStageMask = IntFlags.of(PipelineStage.ColorAttachmentOutput),
-					dstStageMask = IntFlags.of(PipelineStage.ColorAttachmentOutput),
-					srcAccessMask = IntFlags(0),
-					dstAccessMask = IntFlags.of(AccessFlags.ColorAttachmentRead, AccessFlags.ColorAttachmentWrite)
+					src = SubpassDependency.Part(
+						subpass = SubpassDependency.External,
+						stageMask = IntFlags.of(PipelineStage.ColorAttachmentOutput),
+						accessMask = IntFlags(0)
+					),
+					dst = SubpassDependency.Part(
+						subpass = 0,
+						stageMask = IntFlags.of(PipelineStage.ColorAttachmentOutput),
+						accessMask = IntFlags.of(AccessFlags.ColorAttachmentRead, AccessFlags.ColorAttachmentWrite)
+					)
 				)
 			)
 		).autoClose(autoCloser)
@@ -162,18 +179,16 @@ fun main(args: Array<String>) {
 
 		// make a graphics command buffer for each framebuffer
 		val commandBuffers = framebuffers.mapIndexed { index, framebuffer ->
-			val v = index*0.5f + 0.5f
 			commandPool.buffer().apply {
 				begin(IntFlags.of(CommandBuffer.UsageFlags.SimultaneousUse))
 				beginRenderPass(
 					graphicsPipeline,
 					framebuffer,
 					rect,
-					ClearValue.Color.Float(v, v, v)
+					ClearValue.Color.Float(0.0f, 0.0f, 0.0f)
 				)
-				// TEMP
-				//bind(graphicsPipeline)
-				//draw(3, 1)
+				bind(graphicsPipeline)
+				draw(3)
 				endRenderPass()
 				end()
 			}
