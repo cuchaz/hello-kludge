@@ -1,52 +1,40 @@
 package cuchaz.hellokludge
 
-import cuchaz.kludge.tools.AutoCloser
-import cuchaz.kludge.tools.IntFlags
-import cuchaz.kludge.tools.autoClose
+import cuchaz.kludge.tools.*
 import cuchaz.kludge.vulkan.*
 import cuchaz.kludge.window.*
 import java.nio.file.Paths
 
 
 fun main(args: Array<String>) {
-
-	// TODO: make varargs overloads for IntFlags.of() args
-
-	// listen to GLFW error messages
-	Windows.init()
-	Windows.errors.setOut(System.err)
-
-	// check for vulkan support
-	if (!Windows.isVulkanSupported) {
-		throw Error("No Vulkan support from GLFW")
-	}
-
 	AutoCloser().use { autoCloser ->
 
+		// init the window manager
+		Windows.init()
+		Windows.autoClose(autoCloser)
+
+		// check for vulkan support from the window manager
+		if (!Windows.isVulkanSupported) {
+			throw Error("No Vulkan support from window manager")
+		}
+
+		// listen to problems from the window manager
+		Windows.errors.setOut(System.err)
+
+		// make the main vulkan instance with the extensions we need
 		val vulkan = Vulkan(
 			extensionNames = Windows.requiredVulkanExtensions + setOf(Vulkan.DebugExtension),
 			layerNames = setOf(Vulkan.StandardValidationLayer)
 		).autoClose(autoCloser)
 
-		// listen to debug messages
-		vulkan.debugMessager(
-			desiredSeverities = IntFlags.of(
-				DebugMessager.Severity.Error,
-				DebugMessager.Severity.Warning,
-				DebugMessager.Severity.Verbose
-			)
-		) { severityFlags, typeFlags, msg ->
-			println("VULKAN: $msg")
+		// listen to problems from vulkan
+		vulkan.debugMessenger(
+			severities = IntFlags.of(DebugMessenger.Severity.Error, DebugMessenger.Severity.Warning)
+		) { severity, type, msg ->
+			println("VULKAN: ${severity.toFlagsString()} ${type.toFlagsString()} $msg")
 		}.autoClose(autoCloser)
 
-		vulkan.debugInfo("Debug message!")
-
-		// TEMP: print device info
-		for (device in vulkan.physicalDevices) {
-			println("device: $device")
-			println("extensions: ${device.extensionNames}")
-			device.queueFamilies.forEach { println("\t$it") }
-		}
+		vulkan.debugWarn("Don't forget about the thing!")
 
 		// make a window
 		val win = Window(
@@ -59,10 +47,13 @@ fun main(args: Array<String>) {
 		// make a surface for the window
 		val surface = vulkan.surface(win).autoClose(autoCloser)
 
-		// connect to a device
+		// pick a physical device: prefer discrete GPU
 		val physicalDevice = vulkan.physicalDevices
+			.asSequence()
 			.sortedBy { if (it.properties.type == PhysicalDevice.Type.DiscreteGpu) 0 else 1 }
 			.first()
+
+		// create the device and the queues
 		val graphicsFamily = physicalDevice.findQueueFamily(IntFlags.of(PhysicalDevice.QueueFamily.Flags.Graphics))
 		val surfaceFamily = physicalDevice.findQueueFamily(surface)
 		val device = physicalDevice.device(
@@ -72,60 +63,52 @@ fun main(args: Array<String>) {
 			),
 			extensionNames = setOf(PhysicalDevice.SwapchainExtension)
 		).autoClose(autoCloser)
-		println("have a device!: $device")
-
-		// get device queues
 		val graphicsQueue = device.queues[graphicsFamily]!![0]
 		val surfaceQueue = device.queues[surfaceFamily]!![0]
 
 		// build the swapchain
-		// TODO: cleanup this API?
-		val swapchain = device.physicalDevice.swapchainSupport(surface).run {
+		val swapchain = physicalDevice.swapchainSupport(surface).run {
 			swapchain(
 				device,
-				surfaceFormat = pickSurfaceFormat(Format.B8G8R8A8_UNORM, ColorSpace.SRGB_NONLINEAR),
-				presentMode = pickPresentMode(
-					SwapchainSupport.PresentMode.Mailbox,
-					SwapchainSupport.PresentMode.FifoRelaxed,
-					SwapchainSupport.PresentMode.Fifo
-				)
+				surfaceFormat = find(Format.B8G8R8A8_UNORM, ColorSpace.SRGB_NONLINEAR)
+					?: surfaceFormats.first().also { println("using fallback surface format: $it") },
+				presentMode = find(PresentMode.Mailbox)
+					?: find(PresentMode.FifoRelaxed)
+					?: find(PresentMode.Fifo)
+					?: presentModes.first().also { println("using fallback present mode: $it") }
 			)
 		}.autoClose(autoCloser)
-		println("have a swapchain: ${swapchain.surfaceFormat} ${swapchain.presentMode}")
-
-		// get some shaders
-		val vertShader = device.shaderModule(Paths.get("build/shaders/shader.vert.spv")).autoClose(autoCloser)
-		val fragShader = device.shaderModule(Paths.get("build/shaders/shader.frag.spv")).autoClose(autoCloser)
 
 		// make the graphics pipeline
-		val rect = Rect2D(
-			offset = Offset2D(0, 0),
-			extent = swapchain.extent
-		)
+		// TODO: support multiple render passes
+		val colorAttachment =
+			Attachment(
+				format = swapchain.surfaceFormat.format,
+				loadOp = LoadOp.Clear,
+				storeOp = StoreOp.Store,
+				finalLayout = ImageLayout.PresentSrc
+			)
+			.Ref(0, ImageLayout.ColorAttachmentOptimal)
+		val subpass =
+			Subpass(
+				pipelineBindPoint = Subpass.PipelineBindPoint.Graphics,
+				colorAttachments = listOf(colorAttachment)
+			)
+			.Ref(0)
 		val graphicsPipeline = device.graphicsPipeline(
 			stages = listOf(
-				vertShader.Stage("main", IntFlags.of(ShaderStage.Vertex)),
-				fragShader.Stage("main", IntFlags.of(ShaderStage.Fragment))
+				device.shaderModule(Paths.get("build/shaders/shader.vert.spv"))
+					.autoClose(autoCloser)
+					.Stage("main", ShaderStage.Vertex),
+				device.shaderModule(Paths.get("build/shaders/shader.frag.spv"))
+					.autoClose(autoCloser)
+					.Stage("main", ShaderStage.Fragment)
 			),
-			vertexInput = VertexInput(),
 			inputAssembly = InputAssembly(InputAssembly.Topology.TriangleList),
-			viewports = listOf(Viewport(
-				0.0f,
-				0.0f,
-				swapchain.extent.width.toFloat(),
-				swapchain.extent.height.toFloat()
-			)),
-			scissors = listOf(rect),
+			viewports = listOf(swapchain.viewport),
+			scissors = listOf(swapchain.rect),
 			attachments = listOf(
-				AttachmentDescription(
-					format = swapchain.surfaceFormat.format,
-					loadOp = AttachmentDescription.LoadOp.Clear,
-					storeOp = AttachmentDescription.StoreOp.Store,
-					finalLayout = ImageLayout.PresentSrc
-				)
-			),
-			colorBlend = ColorBlendState(listOf(
-				ColorBlendState.Attachment(
+				colorAttachment to ColorBlendState.Attachment(
 					color = ColorBlendState.Attachment.Part(
 						src = BlendFactor.One,
 						dst = BlendFactor.Zero,
@@ -137,63 +120,54 @@ fun main(args: Array<String>) {
 						op = BlendOp.Add
 					)
 				)
-			)),
-			subpasses = listOf(
-				Subpass(
-					pipelineBindPoint = Subpass.PipelineBindPoint.Graphics,
-					colorAttachments = listOf(
-						AttachmentReference(0, ImageLayout.ColorAttachmentOptimal)
-					) // TODO: make references easy
-				)
 			),
+			subpasses = listOf(subpass),
 			subpassDependencies = listOf(
 				SubpassDependency(
-					src = SubpassDependency.Part(
-						subpass = SubpassDependency.External,
-						stageMask = IntFlags.of(PipelineStage.ColorAttachmentOutput),
-						accessMask = IntFlags(0)
+					src = Subpass.External.dependency(
+						stage = IntFlags.of(PipelineStage.ColorAttachmentOutput)
 					),
-					dst = SubpassDependency.Part(
-						subpass = 0,
-						stageMask = IntFlags.of(PipelineStage.ColorAttachmentOutput),
-						accessMask = IntFlags.of(AccessFlags.ColorAttachmentRead, AccessFlags.ColorAttachmentWrite)
+					dst = subpass.dependency(
+						stage = IntFlags.of(PipelineStage.ColorAttachmentOutput),
+						access = IntFlags.of(AccessFlags.ColorAttachmentRead, AccessFlags.ColorAttachmentWrite)
 					)
 				)
 			)
 		).autoClose(autoCloser)
 
 		// make one framebuffer for each swapchain image
-		val framebuffers = swapchain.images.map { image ->
-			val imageView = image.view(Image.ViewType.TwoD, swapchain.surfaceFormat.format)
-				.autoClose(autoCloser)
-			return@map device.framebuffer(
-				graphicsPipeline,
-				listOf(imageView),
-				width = swapchain.extent.width,
-				height = swapchain.extent.height,
-				layers = 1
-			).autoClose(autoCloser)
-		}
-
-		val commandPool = device.commandPool(graphicsFamily).autoClose(autoCloser)
+		val framebuffers = swapchain.images
+			.map { image ->
+				device.framebuffer(
+					graphicsPipeline,
+					imageViews = listOf(
+						image.view(Image.ViewType.TwoD, swapchain.surfaceFormat.format).autoClose(autoCloser)
+					),
+					extent = swapchain.extent
+				).autoClose(autoCloser)
+			}
 
 		// make a graphics command buffer for each framebuffer
-		val commandBuffers = framebuffers.mapIndexed { index, framebuffer ->
+		val commandPool = device.commandPool(graphicsFamily).autoClose(autoCloser)
+		val commandBuffers = framebuffers.map { framebuffer ->
 			commandPool.buffer().apply {
+
+				// fill the command buffer with a single render pass that draws our triangle
 				begin(IntFlags.of(CommandBuffer.UsageFlags.SimultaneousUse))
 				beginRenderPass(
 					graphicsPipeline,
 					framebuffer,
-					rect,
+					swapchain.rect,
 					ClearValue.Color.Float(0.0f, 0.0f, 0.0f)
 				)
 				bind(graphicsPipeline)
-				draw(3)
+				draw(vertices = 3)
 				endRenderPass()
 				end()
 			}
 		}
 
+		// make semaphores for command buffer synchronization
 		val imageAvailable = device.semaphore().autoClose(autoCloser)
 		val renderFinished = device.semaphore().autoClose(autoCloser)
 
@@ -217,16 +191,11 @@ fun main(args: Array<String>) {
 			)
 			surfaceQueue.waitForIdle()
 
-			// TEMP
-			Thread.sleep(100)
-
 			// TODO: measure FPS?
 		}
 
 		// wait for the device to finish before cleaning up
 		device.waitForIdle()
-	}
 
-	// cleanup
-	Windows.close()
+	} // end of scope here cleans up all autoClose() resources
 }
