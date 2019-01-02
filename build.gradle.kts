@@ -41,22 +41,25 @@ tasks {
 		doLast {
 
 			val workingDir = buildDir.resolve("shaders")
-			workingDir.mkdirs()
 
-			fileTree("src/main/glsl")
+			val inDir = file("src/main/glsl")
+			fileTree(inDir)
 				.matching {
 					include("**/*.vert")
 					include("**/*.frag")
-					// TODO: other shader stages?
+					include("**/*.comp")
 				}
-				.forEach { file ->
+				.forEach { inFile ->
+					val inFileRel = inFile.relativeTo(inDir)
+					val outFile = inFileRel.resolveSibling(inFileRel.name + ".spv")
+					workingDir.resolve(outFile.parentFile).mkdirs()
 					exec {
 						this.workingDir = workingDir
 						commandLine(
 							"glslangValidator",
 							"-V",
-							"-o", "${file.name}.spv",
-							file.absolutePath
+							"-o", outFile.path,
+							inFile.absolutePath
 						)
 					}
 				}

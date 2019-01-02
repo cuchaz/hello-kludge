@@ -6,4 +6,4 @@
 
 ## Demos
 
- * [Hello World Triangle](src/main/kotlin/cuchaz/hellokludge/main.kt)
+ * [Hello World Triangle](src/main/kotlin/cuchaz/hellokludge/helloworld/main.kt)

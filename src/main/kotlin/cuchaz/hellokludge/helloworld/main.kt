@@ -1,4 +1,4 @@
-package cuchaz.hellokludge
+package cuchaz.hellokludge.helloworld
 
 import cuchaz.kludge.tools.*
 import cuchaz.kludge.vulkan.*
@@ -97,10 +97,10 @@ fun main(args: Array<String>) {
 			.Ref(0)
 		val graphicsPipeline = device.graphicsPipeline(
 			stages = listOf(
-				device.shaderModule(Paths.get("build/shaders/shader.vert.spv"))
+				device.shaderModule(Paths.get("build/shaders/helloworld/shader.vert.spv"))
 					.autoClose(autoCloser)
 					.Stage("main", ShaderStage.Vertex),
-				device.shaderModule(Paths.get("build/shaders/shader.frag.spv"))
+				device.shaderModule(Paths.get("build/shaders/helloworld/shader.frag.spv"))
 					.autoClose(autoCloser)
 					.Stage("main", ShaderStage.Fragment)
 			),
