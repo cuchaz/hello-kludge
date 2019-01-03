@@ -178,15 +178,14 @@ fun main(args: Array<String>) = autoCloser {
 		// finally!! render something!! =D =D =D
 		val imageIndex = swapchain.acquireNextImage(imageAvailable)
 		graphicsQueue.submit(
-			imageAvailable,
-			IntFlags.of(PipelineStage.ColorAttachmentOutput),
 			commandBuffers[imageIndex],
-			renderFinished
+			waitFor = Queue.WaitInfo(imageAvailable, IntFlags.of(PipelineStage.ColorAttachmentOutput)),
+			signalTo = renderFinished
 		)
 		surfaceQueue.present(
-			renderFinished,
 			swapchain,
-			imageIndex
+			imageIndex,
+			waitFor = renderFinished
 		)
 		surfaceQueue.waitForIdle()
 
