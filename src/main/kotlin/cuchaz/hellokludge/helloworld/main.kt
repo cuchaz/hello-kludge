@@ -69,7 +69,7 @@ fun main(args: Array<String>) = autoCloser {
 	val swapchain = physicalDevice.swapchainSupport(surface).run {
 		swapchain(
 			device,
-			surfaceFormat = find(Format.B8G8R8A8_UNORM, ColorSpace.SRGB_NONLINEAR)
+			surfaceFormat = find(Image.Format.B8G8R8A8_UNORM, Image.ColorSpace.SRGB_NONLINEAR)
 				?: surfaceFormats.first().also { println("using fallback surface format: $it") },
 			presentMode = find(PresentMode.Mailbox)
 				?: find(PresentMode.FifoRelaxed)
@@ -85,12 +85,12 @@ fun main(args: Array<String>) = autoCloser {
 			format = swapchain.surfaceFormat.format,
 			loadOp = LoadOp.Clear,
 			storeOp = StoreOp.Store,
-			finalLayout = ImageLayout.PresentSrc
+			finalLayout = Image.Layout.PresentSrc
 		)
-		.Ref(0, ImageLayout.ColorAttachmentOptimal)
+		.Ref(0, Image.Layout.ColorAttachmentOptimal)
 	val subpass =
 		Subpass(
-			pipelineBindPoint = Subpass.PipelineBindPoint.Graphics,
+			pipelineBindPoint = PipelineBindPoint.Graphics,
 			colorAttachments = listOf(colorAttachment)
 		)
 		.Ref(0)
@@ -98,12 +98,16 @@ fun main(args: Array<String>) = autoCloser {
 		stages = listOf(
 			device.shaderModule(Paths.get("build/shaders/helloworld/shader.vert.spv"))
 				.autoClose()
-				.Stage("main", ShaderStage.Vertex),
+				.stage("main", ShaderStage.Vertex),
 			device.shaderModule(Paths.get("build/shaders/helloworld/shader.frag.spv"))
 				.autoClose()
-				.Stage("main", ShaderStage.Fragment)
+				.stage("main", ShaderStage.Fragment)
 		),
 		inputAssembly = InputAssembly(InputAssembly.Topology.TriangleList),
+		rasterizationState = RasterizationState(
+			cullMode = IntFlags.of(CullMode.Back),
+			frontFace = FrontFace.Counterclockwise
+		),
 		viewports = listOf(swapchain.viewport),
 		scissors = listOf(swapchain.rect),
 		attachments = listOf(
@@ -128,7 +132,7 @@ fun main(args: Array<String>) = autoCloser {
 				),
 				dst = subpass.dependency(
 					stage = IntFlags.of(PipelineStage.ColorAttachmentOutput),
-					access = IntFlags.of(AccessFlags.ColorAttachmentRead, AccessFlags.ColorAttachmentWrite)
+					access = IntFlags.of(Access.ColorAttachmentRead, Access.ColorAttachmentWrite)
 				)
 			)
 		)
@@ -140,7 +144,7 @@ fun main(args: Array<String>) = autoCloser {
 			device.framebuffer(
 				graphicsPipeline,
 				imageViews = listOf(
-					image.view(Image.ViewType.TwoD, swapchain.surfaceFormat.format).autoClose()
+					image.view().autoClose()
 				),
 				extent = swapchain.extent
 			).autoClose()
@@ -152,14 +156,14 @@ fun main(args: Array<String>) = autoCloser {
 		commandPool.buffer().apply {
 
 			// fill the command buffer with a single render pass that draws our triangle
-			begin(IntFlags.of(CommandBuffer.UsageFlags.SimultaneousUse))
+			begin(IntFlags.of(CommandBuffer.Usage.SimultaneousUse))
 			beginRenderPass(
 				graphicsPipeline,
 				framebuffer,
 				swapchain.rect,
 				ClearValue.Color.Float(0.0f, 0.0f, 0.0f)
 			)
-			bind(graphicsPipeline)
+			bindPipeline(graphicsPipeline)
 			draw(vertices = 3)
 			endRenderPass()
 			end()
@@ -179,8 +183,8 @@ fun main(args: Array<String>) = autoCloser {
 		val imageIndex = swapchain.acquireNextImage(imageAvailable)
 		graphicsQueue.submit(
 			commandBuffers[imageIndex],
-			waitFor = Queue.WaitInfo(imageAvailable, IntFlags.of(PipelineStage.ColorAttachmentOutput)),
-			signalTo = renderFinished
+			waitFor = listOf(Queue.WaitInfo(imageAvailable, IntFlags.of(PipelineStage.ColorAttachmentOutput))),
+			signalTo = listOf(renderFinished)
 		)
 		surfaceQueue.present(
 			swapchain,
