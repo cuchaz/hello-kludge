@@ -2,7 +2,7 @@ import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 
 plugins {
-	kotlin("jvm") version "1.3.10"
+	kotlin("jvm") version "1.3.20-eap-52"
 }
 
 
@@ -10,6 +10,7 @@ group = "cuchaz"
 version = "0.1"
 
 repositories {
+	maven("https://dl.bintray.com/kotlin/kotlin-eap")
 	jcenter()
 }
 
