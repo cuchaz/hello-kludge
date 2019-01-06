@@ -255,18 +255,19 @@ fun main(args: Array<String>) =	autoCloser {
 	)
 
 	// update each descriptor set with its sampler and image
-	for (i in 0 until swapchainImageViews.size) {
-		descriptorSets[i].update(
-			samplerBinding,
-			images = listOf(
-				DescriptorSet.ImageInfo(
-					sampler = sampler,
-					view = gpuImageView,
-					layout = Image.Layout.ShaderReadOnlyOptimal
+	device.updateDescriptorSets(
+		writes = descriptorSets.map { set ->
+			set.address(samplerBinding).write(
+				images = listOf(
+					DescriptorSet.ImageInfo(
+						sampler = sampler,
+						view = gpuImageView,
+						layout = Image.Layout.ShaderReadOnlyOptimal
+					)
 				)
 			)
-		)
-	}
+		}
+	)
 
 	// make the graphics pipeline
 	val colorAttachment =
