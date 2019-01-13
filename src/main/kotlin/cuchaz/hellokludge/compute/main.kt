@@ -96,7 +96,7 @@ fun main(args: Array<String>) = autoCloser {
 	// make the descriptor set
 	val descriptorPool = device.descriptorPool(
 		maxSets = 1,
-		sizes = mapOf(
+		sizes = DescriptorType.Counts(
 			DescriptorType.StorageBuffer to 2
 		)
 	).autoClose()

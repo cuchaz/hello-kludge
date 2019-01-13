@@ -246,7 +246,7 @@ fun main(args: Array<String>) =	autoCloser {
 	// make a descriptor set for each swapchain image
 	val descriptorPool = device.descriptorPool(
 		maxSets = swapchainImageViews.size,
-		sizes = mapOf(
+		sizes = DescriptorType.Counts(
 			DescriptorType.CombinedImageSampler to swapchainImageViews.size
 		)
 	).autoClose()
