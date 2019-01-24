@@ -269,7 +269,7 @@ fun main(args: Array<String>) =	autoCloser {
 		}
 	)
 
-	// make the graphics pipeline
+	// make the render pass
 	val colorAttachment =
 		Attachment(
 			format = swapchain.surfaceFormat.format,
@@ -277,14 +277,33 @@ fun main(args: Array<String>) =	autoCloser {
 			storeOp = StoreOp.Store,
 			finalLayout = Image.Layout.PresentSrc
 		)
-		.Ref(0, Image.Layout.ColorAttachmentOptimal)
 	val subpass =
 		Subpass(
 			pipelineBindPoint = PipelineBindPoint.Graphics,
-			colorAttachments = listOf(colorAttachment)
+			colorAttachments = listOf(
+				colorAttachment to Image.Layout.ColorAttachmentOptimal
+			)
 		)
-		.Ref(0)
+	val renderPass = device
+		.renderPass(
+			attachments = listOf(colorAttachment),
+			subpasses = listOf(subpass),
+			subpassDependencies = listOf(
+				SubpassDependency(
+					src = Subpass.External.dependency(
+						stage = IntFlags.of(PipelineStage.ColorAttachmentOutput)
+					),
+					dst = subpass.dependency(
+						stage = IntFlags.of(PipelineStage.ColorAttachmentOutput),
+						access = IntFlags.of(Access.ColorAttachmentRead, Access.ColorAttachmentWrite)
+					)
+				)
+			)
+		).autoClose()
+
+	// make the graphics pipeline
 	val graphicsPipeline = device.graphicsPipeline(
+		renderPass,
 		stages = listOf(
 			device.shaderModule(Paths.get("build/shaders/texquad/shader.vert.spv"))
 				.autoClose()
@@ -315,7 +334,7 @@ fun main(args: Array<String>) =	autoCloser {
 		),
 		viewports = listOf(swapchain.viewport),
 		scissors = listOf(swapchain.rect),
-		attachments = listOf(
+		attachmentBlends = listOf(
 			colorAttachment to ColorBlendState.Attachment(
 				color = ColorBlendState.Attachment.Part(
 					src = BlendFactor.SrcAlpha,
@@ -328,18 +347,6 @@ fun main(args: Array<String>) =	autoCloser {
 					op = BlendOp.Add
 				)
 			)
-		),
-		subpasses = listOf(subpass),
-		subpassDependencies = listOf(
-			SubpassDependency(
-				src = Subpass.External.dependency(
-					stage = IntFlags.of(PipelineStage.ColorAttachmentOutput)
-				),
-				dst = subpass.dependency(
-					stage = IntFlags.of(PipelineStage.ColorAttachmentOutput),
-					access = IntFlags.of(Access.ColorAttachmentRead, Access.ColorAttachmentWrite)
-				)
-			)
 		)
 	).autoClose()
 
@@ -347,7 +354,7 @@ fun main(args: Array<String>) =	autoCloser {
 	val framebuffers = swapchainImageViews
 		.map { swapchainImageView ->
 			device.framebuffer(
-				graphicsPipeline,
+				renderPass,
 				imageViews = listOf(swapchainImageView),
 				extent = swapchain.extent
 			).autoClose()
@@ -360,7 +367,7 @@ fun main(args: Array<String>) =	autoCloser {
 			// draw the quad in a single render pass
 			begin(IntFlags.of(CommandBuffer.Usage.SimultaneousUse))
 			beginRenderPass(
-				graphicsPipeline,
+				renderPass,
 				framebuffers[i],
 				swapchain.rect,
 				ClearValue.Color.Float(0.8f, 0.8f, 0.8f)

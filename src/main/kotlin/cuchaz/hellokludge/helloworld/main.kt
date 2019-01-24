@@ -78,8 +78,7 @@ fun main(args: Array<String>) = autoCloser {
 		)
 	}.autoClose()
 
-	// make the graphics pipeline
-	// TODO: support multiple render passes
+	// make the render pass
 	val colorAttachment =
 		Attachment(
 			format = swapchain.surfaceFormat.format,
@@ -87,14 +86,45 @@ fun main(args: Array<String>) = autoCloser {
 			storeOp = StoreOp.Store,
 			finalLayout = Image.Layout.PresentSrc
 		)
-		.Ref(0, Image.Layout.ColorAttachmentOptimal)
 	val subpass =
 		Subpass(
 			pipelineBindPoint = PipelineBindPoint.Graphics,
-			colorAttachments = listOf(colorAttachment)
+			colorAttachments = listOf(
+				colorAttachment to Image.Layout.ColorAttachmentOptimal
+			)
 		)
-		.Ref(0)
+	val renderPass = device
+		.renderPass(
+			attachments = listOf(colorAttachment),
+			subpasses = listOf(subpass),
+			subpassDependencies = listOf(
+				SubpassDependency(
+					src = Subpass.External.dependency(
+						stage = IntFlags.of(PipelineStage.ColorAttachmentOutput)
+					),
+					dst = subpass.dependency(
+						stage = IntFlags.of(PipelineStage.ColorAttachmentOutput),
+						access = IntFlags.of(Access.ColorAttachmentRead, Access.ColorAttachmentWrite)
+					)
+				)
+			)
+		).autoClose()
+
+	// make one framebuffer for each swapchain image in the render pass
+	val framebuffers = swapchain.images
+		.map { image ->
+			device.framebuffer(
+				renderPass,
+				imageViews = listOf(
+					image.view().autoClose()
+				),
+				extent = swapchain.extent
+			).autoClose()
+		}
+
+	// make the graphics pipeline
 	val graphicsPipeline = device.graphicsPipeline(
+		renderPass,
 		stages = listOf(
 			device.shaderModule(Paths.get("build/shaders/helloworld/shader.vert.spv"))
 				.autoClose()
@@ -110,7 +140,7 @@ fun main(args: Array<String>) = autoCloser {
 		),
 		viewports = listOf(swapchain.viewport),
 		scissors = listOf(swapchain.rect),
-		attachments = listOf(
+		attachmentBlends = listOf(
 			colorAttachment to ColorBlendState.Attachment(
 				color = ColorBlendState.Attachment.Part(
 					src = BlendFactor.One,
@@ -123,32 +153,8 @@ fun main(args: Array<String>) = autoCloser {
 					op = BlendOp.Add
 				)
 			)
-		),
-		subpasses = listOf(subpass),
-		subpassDependencies = listOf(
-			SubpassDependency(
-				src = Subpass.External.dependency(
-					stage = IntFlags.of(PipelineStage.ColorAttachmentOutput)
-				),
-				dst = subpass.dependency(
-					stage = IntFlags.of(PipelineStage.ColorAttachmentOutput),
-					access = IntFlags.of(Access.ColorAttachmentRead, Access.ColorAttachmentWrite)
-				)
-			)
 		)
 	).autoClose()
-
-	// make one framebuffer for each swapchain image
-	val framebuffers = swapchain.images
-		.map { image ->
-			device.framebuffer(
-				graphicsPipeline,
-				imageViews = listOf(
-					image.view().autoClose()
-				),
-				extent = swapchain.extent
-			).autoClose()
-		}
 
 	// make a graphics command buffer for each framebuffer
 	val commandPool = device.commandPool(graphicsFamily).autoClose()
@@ -158,7 +164,7 @@ fun main(args: Array<String>) = autoCloser {
 			// fill the command buffer with a single render pass that draws our triangle
 			begin(IntFlags.of(CommandBuffer.Usage.SimultaneousUse))
 			beginRenderPass(
-				graphicsPipeline,
+				renderPass,
 				framebuffer,
 				swapchain.rect,
 				ClearValue.Color.Float(0.0f, 0.0f, 0.0f)
