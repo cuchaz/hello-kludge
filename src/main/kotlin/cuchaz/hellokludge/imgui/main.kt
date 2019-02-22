@@ -1,6 +1,6 @@
 package cuchaz.hellokludge.imgui
 
-import cuchaz.kludge.imgui.Commands
+import cuchaz.kludge.imgui.Commands.BeginFlags
 import cuchaz.kludge.imgui.Imgui
 import cuchaz.kludge.imgui.context
 import cuchaz.kludge.tools.Ref
@@ -193,9 +193,11 @@ fun main(args: Array<String>) = autoCloser {
 	val renderFinished = device.semaphore().autoClose()
 
 	// GUI state
-	val winOpen = Ref(true)
-	val check = Ref(false)
+	val winOpen = Ref.of(true)
+	val check = Ref.of(false)
 	var counter = 0
+	val pickColors = listOf("Red", "Green", "Blue")
+	var pickedColor = 0
 
 	// main loop
 	while (!win.shouldClose()) {
@@ -205,9 +207,16 @@ fun main(args: Array<String>) = autoCloser {
 		// define the gui for this frame
 		Imgui.frame {
 
+			setNextWindowPos(20f, 20f)
+			begin("Gotta go fast", flags=IntFlags.of(BeginFlags.NoSavedSettings, BeginFlags.NoResize))
+			text("display size: ${Imgui.io.displaySize.width} x ${Imgui.io.displaySize.height}")
+			text("frame time: ${String.format("%.3f", 1000f*Imgui.io.deltaTime)} ms")
+			text("FPS: ${String.format("%.3f", Imgui.io.frameRate)}")
+			end()
+
 			if (winOpen.value) {
-				setNextWindowSize(400f, 200f)
-				begin("Dear ImGUI", winOpen, IntFlags.of(Commands.BeginFlags.NoResize))
+				setNextWindowPos(20f, 120f)
+				begin("Dear ImGUI", winOpen, IntFlags.of(BeginFlags.NoSavedSettings))
 
 				text("This is a GUI!")
 
@@ -223,9 +232,29 @@ fun main(args: Array<String>) = autoCloser {
 				sameLine()
 				text("clicked $counter times")
 
-				text("display size: ${Imgui.io.displaySize.width} x ${Imgui.io.displaySize.height}")
-				text("frame time: ${String.format("%.3f", 1000f*Imgui.io.deltaTime)} ms")
-				text("FPS: ${String.format("%.3f", Imgui.io.frameRate)}")
+				spacing()
+
+				text("What's your favorite color?")
+				if (beginCombo("##color1", pickColors[pickedColor])) {
+					pickColors.forEachIndexed { i, label ->
+						if (selectable(label, i == pickedColor)) {
+							pickedColor = i
+						}
+					}
+					endCombo()
+				}
+
+				spacing()
+
+				text("Wait, what's that color again?")
+				if (listBoxHeader("##color2", pickColors.size, pickColors.size)) {
+					pickColors.forEachIndexed { i, label ->
+						if (selectable(label, i == pickedColor)) {
+							pickedColor = i
+						}
+					}
+					listBoxFooter()
+				}
 
 				end()
 			}
@@ -244,7 +273,7 @@ fun main(args: Array<String>) = autoCloser {
 				renderPass,
 				framebuffer,
 				swapchain.rect,
-				ClearValue.Color.Float(0.0f, 0.0f, 0.0f)
+				mapOf(colorAttachment to ClearValue.Color.Float(0.0f, 0.0f, 0.0f))
 			)
 
 			// draw our triangle

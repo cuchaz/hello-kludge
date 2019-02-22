@@ -167,7 +167,7 @@ fun main(args: Array<String>) = autoCloser {
 				renderPass,
 				framebuffer,
 				swapchain.rect,
-				ClearValue.Color.Float(0.0f, 0.0f, 0.0f)
+				mapOf(colorAttachment to ClearValue.Color.Float(0.0f, 0.0f, 0.0f))
 			)
 			bindPipeline(graphicsPipeline)
 			draw(vertices = 3)

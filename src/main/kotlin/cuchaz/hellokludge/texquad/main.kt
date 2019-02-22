@@ -370,7 +370,7 @@ fun main(args: Array<String>) =	autoCloser {
 				renderPass,
 				framebuffers[i],
 				swapchain.rect,
-				ClearValue.Color.Float(0.8f, 0.8f, 0.8f)
+				mapOf(colorAttachment to ClearValue.Color.Float(0.8f, 0.8f, 0.8f))
 			)
 			bindPipeline(graphicsPipeline)
 			bindVertexBuffer(vertexBuf.buffer)
