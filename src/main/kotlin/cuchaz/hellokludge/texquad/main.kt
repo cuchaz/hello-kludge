@@ -8,7 +8,7 @@ import java.nio.file.Paths
 import javax.imageio.ImageIO
 
 
-fun main(args: Array<String>) =	autoCloser {
+fun main() = autoCloser {
 
 	// init the window manager
 	Windows.init()
@@ -386,7 +386,7 @@ fun main(args: Array<String>) =	autoCloser {
 	val renderFinished = device.semaphore().autoClose()
 
 	// main loop
-	while (!win.shouldClose()) {
+	while (!win.shouldClose) {
 
 		Windows.pollEvents()
 

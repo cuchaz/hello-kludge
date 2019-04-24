@@ -7,7 +7,7 @@ import cuchaz.kludge.vulkan.*
 import java.nio.file.Paths
 
 
-fun main(args: Array<String>) = autoCloser {
+fun main() = autoCloser {
 
 	// make the main vulkan instance with the extensions we need
 	val vulkan = Vulkan(

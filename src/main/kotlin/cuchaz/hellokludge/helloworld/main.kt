@@ -6,7 +6,7 @@ import cuchaz.kludge.window.*
 import java.nio.file.Paths
 
 
-fun main(args: Array<String>) = autoCloser {
+fun main() = autoCloser {
 
 	// init the window manager
 	Windows.init()
@@ -181,7 +181,7 @@ fun main(args: Array<String>) = autoCloser {
 	val renderFinished = device.semaphore().autoClose()
 
 	// main loop
-	while (!win.shouldClose()) {
+	while (!win.shouldClose) {
 
 		Windows.pollEvents()
 

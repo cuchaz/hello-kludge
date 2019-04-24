@@ -15,7 +15,7 @@ import cuchaz.kludge.window.Windows
 import java.nio.file.Paths
 
 
-fun main(args: Array<String>) = autoCloser {
+fun main() = autoCloser {
 
 	// init the window manager
 	Windows.init()
@@ -200,7 +200,7 @@ fun main(args: Array<String>) = autoCloser {
 	var pickedColor = 0
 
 	// main loop
-	while (!win.shouldClose()) {
+	while (!win.shouldClose) {
 
 		Windows.pollEvents()
 
