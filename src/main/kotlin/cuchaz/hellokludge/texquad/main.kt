@@ -74,6 +74,26 @@ fun main() = autoCloser {
 	// create the command pool for command buffers submitted to graphics queues
 	val commandPool = device.commandPool(graphicsFamily).autoClose()
 
+	fun Image.Allocated.transitionImage(access: IntFlags<Access>, layout: Image.Layout) {
+		graphicsQueue.submit(commandPool.buffer().apply {
+			begin(IntFlags.of(CommandBuffer.Usage.OneTimeSubmit))
+
+			pipelineBarrier(
+				srcStage = IntFlags.of(PipelineStage.AllCommands),
+				dstStage = IntFlags.of(PipelineStage.AllCommands),
+				images = listOf(
+					image.barrier(
+						dstAccess = access,
+						newLayout = layout
+					)
+				)
+			)
+
+			end()
+		})
+		graphicsQueue.waitForIdle()
+	}
+
 	// allocate the image on the GPU
 	val gpuImage = device.
 		image(
@@ -83,12 +103,23 @@ fun main() = autoCloser {
 			usage = IntFlags.of(Image.Usage.TransferDst, Image.Usage.Sampled)
 		)
 		.autoClose()
-		.allocate { memType ->
-			memType.flags.hasAll(IntFlags.of(
-				MemoryType.Flags.DeviceLocal
-			))
-		}
+		.allocateDevice()
 		.autoClose()
+		.apply {
+
+			// upload image to the GPU
+			transitionImage(IntFlags.of(Access.HostWrite), Image.Layout.General)
+			transferHtoD { buf ->
+
+				// upload the image to the GPU
+				buf.put(cpuImageBytes)
+				buf.flip()
+			}
+
+			// prep the image for the fragment shader
+			transitionImage(IntFlags.of(Access.ShaderRead), Image.Layout.ShaderReadOnlyOptimal)
+		}
+
 	val gpuImageView = gpuImage.image.view(
 		// ImageIO has the color channels ABGR order for some reason
 		components = Image.Components(
@@ -98,66 +129,6 @@ fun main() = autoCloser {
 			Image.Swizzle.R
 		)
 	).autoClose()
-
-	// upload the image the GPU
-	autoCloser {
-		graphicsQueue.submit(commandPool.buffer().apply {
-			begin(IntFlags.of(CommandBuffer.Usage.OneTimeSubmit))
-
-			// transition image to transfer write
-			pipelineBarrier(
-				srcStage = IntFlags.of(PipelineStage.TopOfPipe),
-				dstStage = IntFlags.of(PipelineStage.Transfer),
-				images = listOf(
-					gpuImage.image.barrier(
-						dstAccess = IntFlags.of(Access.TransferWrite),
-						newLayout = Image.Layout.TransferDstOptimal
-					)
-				)
-			)
-
-			// allocate a staging buffer and write the image to it
-			val stagingBuf = device
-				.buffer(
-					cpuImageBytes.size.toLong(),
-					IntFlags.of(Buffer.Usage.TransferSrc)
-				)
-				.autoClose()
-				.allocate { memType ->
-					memType.flags.hasAll(IntFlags.of(
-						MemoryType.Flags.HostVisible,
-						MemoryType.Flags.HostCoherent
-					))
-				}
-				.autoClose()
-				.apply {
-					memory.map { buf ->
-						buf.put(cpuImageBytes)
-						buf.flip()
-					}
-				}
-
-			copyBufferToImage(stagingBuf.buffer, gpuImage.image, Image.Layout.TransferDstOptimal)
-
-			// transition image to shader read
-			pipelineBarrier(
-				srcStage = IntFlags.of(PipelineStage.Transfer),
-				dstStage = IntFlags.of(PipelineStage.FragmentShader),
-				images = listOf(
-					gpuImage.image.barrier(
-						// TODO: check if we really need the src/old spec, or if it's just redundant
-						srcAccess = IntFlags.of(Access.TransferWrite),
-						dstAccess = IntFlags.of(Access.ShaderRead),
-						oldLayout = Image.Layout.TransferDstOptimal,
-						newLayout = Image.Layout.ShaderReadOnlyOptimal
-					)
-				)
-			)
-
-			end()
-		})
-		graphicsQueue.waitForIdle()
-	}
 
 	// make a sampler
 	val sampler = device.sampler().autoClose()
@@ -169,54 +140,21 @@ fun main() = autoCloser {
 			usage = IntFlags.of(Buffer.Usage.VertexBuffer, Buffer.Usage.TransferDst)
 		)
 		.autoClose()
-		.allocate { memType ->
-			memType.flags.hasAll(IntFlags.of(
-				MemoryType.Flags.DeviceLocal
-			))
-		}
+		.allocateDevice()
 		.autoClose()
+		.transferHtoD { buf ->
 
-	// upload vertices to the vertex buffer
-	autoCloser {
-		graphicsQueue.submit(commandPool.buffer().apply {
-			begin(IntFlags.of(CommandBuffer.Usage.OneTimeSubmit))
-
-			// allocate a staging buffer and write vertex data to it
-			val stagingBuf = device
-				.buffer(
-					vertexBuf.buffer.size,
-					IntFlags.of(Buffer.Usage.TransferSrc)
-				)
-				.autoClose()
-				.allocate { memType ->
-					memType.flags.hasAll(IntFlags.of(
-						MemoryType.Flags.HostVisible,
-						MemoryType.Flags.HostCoherent
-					))
-				}
-				.autoClose()
-				.apply {
-					memory.map { buf ->
-
-						// make two ccw triangles in a fan
-						// in clip space
-						// with texture coords
-						buf.putFloats(
-							-1.0f,  1.0f,  0.0f, 1.0f, // lower left
-							 1.0f,  1.0f,  1.0f, 1.0f, // lower right
-							 1.0f, -1.0f,  1.0f, 0.0f, // upper right
-							-1.0f, -1.0f,  0.0f, 0.0f // upper left
-						)
-						buf.flip()
-					}
-				}
-
-			copyBuffer(stagingBuf.buffer, vertexBuf.buffer)
-
-			end()
-		})
-		graphicsQueue.waitForIdle()
-	}
+			// make two ccw triangles in a fan
+			// in clip space
+			// with texture coords
+			buf.putFloats(
+				-1.0f,  1.0f,  0.0f, 1.0f, // lower left
+				1.0f,  1.0f,  1.0f, 1.0f, // lower right
+				1.0f, -1.0f,  1.0f, 0.0f, // upper right
+				-1.0f, -1.0f,  0.0f, 0.0f // upper left
+			)
+			buf.flip()
+		}
 
 	// build the swapchain
 	val swapchain = physicalDevice.swapchainSupport(surface).run {
@@ -334,7 +272,7 @@ fun main() = autoCloser {
 		),
 		viewports = listOf(swapchain.viewport),
 		scissors = listOf(swapchain.rect),
-		attachmentBlends = listOf(
+		colorAttachmentBlends = mapOf(
 			colorAttachment to ColorBlendState.Attachment(
 				color = ColorBlendState.Attachment.Part(
 					src = BlendFactor.SrcAlpha,

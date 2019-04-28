@@ -147,7 +147,7 @@ fun main() = autoCloser {
 		),
 		viewports = listOf(swapchain.viewport),
 		scissors = listOf(swapchain.rect),
-		attachmentBlends = listOf(
+		colorAttachmentBlends = mapOf(
 			colorAttachment to ColorBlendState.Attachment(
 				color = ColorBlendState.Attachment.Part(
 					src = BlendFactor.One,
