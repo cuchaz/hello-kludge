@@ -195,8 +195,8 @@ fun main() = autoCloser {
 		val imageAvailable = device.semaphore().autoClose()
 		val renderFinished = device.semaphore().autoClose()
 
-		// TODO: is this the right place for this?
 		init {
+			// init ImGUI for this renderer
 			Imgui.init(win, graphicsQueue, descriptorPool, renderPass)
 			Imgui.initFonts()
 		}
