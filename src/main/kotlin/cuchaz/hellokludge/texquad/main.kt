@@ -156,193 +156,219 @@ fun main() = autoCloser {
 			buf.flip()
 		}
 
-	// build the swapchain
-	val swapchain = physicalDevice.swapchainSupport(surface).run {
-		swapchain(
-			device,
-			surfaceFormat = find(Image.Format.B8G8R8A8_UNORM, Image.ColorSpace.SRGB_NONLINEAR)
-				?: surfaceFormats.first().also { println("using fallback surface format: $it") },
-			presentMode = find(PresentMode.Mailbox)
-				?: find(PresentMode.FifoRelaxed)
-				?: find(PresentMode.Fifo)
-				?: presentModes.first().also { println("using fallback present mode: $it") }
+	class Renderer(oldSwapchain: Swapchain? = null) : AutoCloseable {
+
+		private val closer = AutoCloser()
+		private fun <R:AutoCloseable> R.autoClose() = also { closer.add(this@autoClose) }
+		override fun close() = closer.close()
+
+		// build the swapchain
+		val swapchain = physicalDevice.swapchainSupport(surface).run {
+			swapchain(
+				device,
+				surfaceFormat = find(Image.Format.B8G8R8A8_UNORM, Image.ColorSpace.SRGB_NONLINEAR)
+					?: surfaceFormats.first().also { println("using fallback surface format: $it") },
+				presentMode = find(PresentMode.Mailbox)
+					?: find(PresentMode.FifoRelaxed)
+					?: find(PresentMode.Fifo)
+					?: presentModes.first().also { println("using fallback present mode: $it") },
+				oldSwapchain = oldSwapchain
+			)
+		}.autoClose()
+		val swapchainImageViews = swapchain.images
+			.map {
+				it.view().autoClose()
+			}
+
+		// build the descriptor set layout
+		val samplerBinding = DescriptorSetLayout.Binding(
+			binding = 1,
+			type = DescriptorType.CombinedImageSampler,
+			stages = IntFlags.of(ShaderStage.Fragment)
 		)
-	}.autoClose()
-	val swapchainImageViews = swapchain.images
-		.map {
-			it.view().autoClose()
+		val descriptorSetLayout = device.descriptorSetLayout(listOf(samplerBinding)).autoClose()
+
+		// make a descriptor set for each swapchain image
+		val descriptorPool = device.descriptorPool(
+			maxSets = swapchainImageViews.size,
+			sizes = DescriptorType.Counts(
+				DescriptorType.CombinedImageSampler to swapchainImageViews.size
+			)
+		).autoClose()
+		val descriptorSets = descriptorPool.allocate(
+			swapchainImageViews.map { descriptorSetLayout }
+		)
+
+		init {
+			// update each descriptor set with its sampler and image
+			device.updateDescriptorSets(
+				writes = descriptorSets.map { set ->
+					set.address(samplerBinding).write(
+						images = listOf(
+							DescriptorSet.ImageInfo(
+								sampler = sampler,
+								view = gpuImageView,
+								layout = Image.Layout.ShaderReadOnlyOptimal
+							)
+						)
+					)
+				}
+			)
 		}
 
-	// build the descriptor set layout
-	val samplerBinding = DescriptorSetLayout.Binding(
-		binding = 1,
-		type = DescriptorType.CombinedImageSampler,
-		stages = IntFlags.of(ShaderStage.Fragment)
-	)
-	val descriptorSetLayout = device.descriptorSetLayout(listOf(samplerBinding)).autoClose()
-
-	// make a descriptor set for each swapchain image
-	val descriptorPool = device.descriptorPool(
-		maxSets = swapchainImageViews.size,
-		sizes = DescriptorType.Counts(
-			DescriptorType.CombinedImageSampler to swapchainImageViews.size
-		)
-	).autoClose()
-	val descriptorSets = descriptorPool.allocate(
-		swapchainImageViews.map { descriptorSetLayout }
-	)
-
-	// update each descriptor set with its sampler and image
-	device.updateDescriptorSets(
-		writes = descriptorSets.map { set ->
-			set.address(samplerBinding).write(
-				images = listOf(
-					DescriptorSet.ImageInfo(
-						sampler = sampler,
-						view = gpuImageView,
-						layout = Image.Layout.ShaderReadOnlyOptimal
-					)
+		// make the render pass
+		val colorAttachment =
+			Attachment(
+				format = swapchain.surfaceFormat.format,
+				loadOp = LoadOp.Clear,
+				storeOp = StoreOp.Store,
+				finalLayout = Image.Layout.PresentSrc
+			)
+		val subpass =
+			Subpass(
+				pipelineBindPoint = PipelineBindPoint.Graphics,
+				colorAttachments = listOf(
+					colorAttachment to Image.Layout.ColorAttachmentOptimal
 				)
 			)
-		}
-	)
+		val renderPass = device
+			.renderPass(
+				attachments = listOf(colorAttachment),
+				subpasses = listOf(subpass),
+				subpassDependencies = listOf(
+					SubpassDependency(
+						src = Subpass.External.dependency(
+							stage = IntFlags.of(PipelineStage.ColorAttachmentOutput)
+						),
+						dst = subpass.dependency(
+							stage = IntFlags.of(PipelineStage.ColorAttachmentOutput),
+							access = IntFlags.of(Access.ColorAttachmentRead, Access.ColorAttachmentWrite)
+						)
+					)
+				)
+			).autoClose()
 
-	// make the render pass
-	val colorAttachment =
-		Attachment(
-			format = swapchain.surfaceFormat.format,
-			loadOp = LoadOp.Clear,
-			storeOp = StoreOp.Store,
-			finalLayout = Image.Layout.PresentSrc
-		)
-	val subpass =
-		Subpass(
-			pipelineBindPoint = PipelineBindPoint.Graphics,
-			colorAttachments = listOf(
-				colorAttachment to Image.Layout.ColorAttachmentOptimal
-			)
-		)
-	val renderPass = device
-		.renderPass(
-			attachments = listOf(colorAttachment),
-			subpasses = listOf(subpass),
-			subpassDependencies = listOf(
-				SubpassDependency(
-					src = Subpass.External.dependency(
-						stage = IntFlags.of(PipelineStage.ColorAttachmentOutput)
+		// make the graphics pipeline
+		val graphicsPipeline = device.graphicsPipeline(
+			renderPass,
+			stages = listOf(
+				device.shaderModule(Paths.get("build/shaders/texquad/shader.vert.spv"))
+					.autoClose()
+					.stage("main", ShaderStage.Vertex),
+				device.shaderModule(Paths.get("build/shaders/texquad/shader.frag.spv"))
+					.autoClose()
+					.stage("main", ShaderStage.Fragment)
+			),
+			descriptorSetLayouts = listOf(descriptorSetLayout),
+			vertexInput = VertexInput {
+				binding(stride = Float.SIZE_BYTES*4) {
+					attribute(
+						location = 0,
+						format = Image.Format.R32G32_SFLOAT,
+						offset = 0
+					)
+					attribute(
+						location = 1,
+						format = Image.Format.R32G32_SFLOAT,
+						offset = Float.SIZE_BYTES*2
+					)
+				}
+			},
+			inputAssembly = InputAssembly(InputAssembly.Topology.TriangleFan),
+			rasterizationState = RasterizationState(
+				cullMode = IntFlags.of(CullMode.Back),
+				frontFace = FrontFace.Counterclockwise
+			),
+			viewports = listOf(swapchain.viewport),
+			scissors = listOf(swapchain.rect),
+			colorAttachmentBlends = mapOf(
+				colorAttachment to ColorBlendState.Attachment(
+					color = ColorBlendState.Attachment.Part(
+						src = BlendFactor.SrcAlpha,
+						dst = BlendFactor.OneMinusSrcAlpha,
+						op = BlendOp.Add
 					),
-					dst = subpass.dependency(
-						stage = IntFlags.of(PipelineStage.ColorAttachmentOutput),
-						access = IntFlags.of(Access.ColorAttachmentRead, Access.ColorAttachmentWrite)
+					alpha = ColorBlendState.Attachment.Part(
+						src = BlendFactor.One,
+						dst = BlendFactor.Zero,
+						op = BlendOp.Add
 					)
 				)
 			)
 		).autoClose()
 
-	// make the graphics pipeline
-	val graphicsPipeline = device.graphicsPipeline(
-		renderPass,
-		stages = listOf(
-			device.shaderModule(Paths.get("build/shaders/texquad/shader.vert.spv"))
-				.autoClose()
-				.stage("main", ShaderStage.Vertex),
-			device.shaderModule(Paths.get("build/shaders/texquad/shader.frag.spv"))
-				.autoClose()
-				.stage("main", ShaderStage.Fragment)
-		),
-		descriptorSetLayouts = listOf(descriptorSetLayout),
-		vertexInput = VertexInput {
-			binding(stride = Float.SIZE_BYTES*4) {
-				attribute(
-					location = 0,
-					format = Image.Format.R32G32_SFLOAT,
-					offset = 0
-				)
-				attribute(
-					location = 1,
-					format = Image.Format.R32G32_SFLOAT,
-					offset = Float.SIZE_BYTES*2
-				)
+		// make one framebuffer for each swapchain image
+		val framebuffers = swapchainImageViews
+			.map { swapchainImageView ->
+				device.framebuffer(
+					renderPass,
+					imageViews = listOf(swapchainImageView),
+					extent = swapchain.extent
+				).autoClose()
 			}
-		},
-		inputAssembly = InputAssembly(InputAssembly.Topology.TriangleFan),
-		rasterizationState = RasterizationState(
-			cullMode = IntFlags.of(CullMode.Back),
-			frontFace = FrontFace.Counterclockwise
-		),
-		viewports = listOf(swapchain.viewport),
-		scissors = listOf(swapchain.rect),
-		colorAttachmentBlends = mapOf(
-			colorAttachment to ColorBlendState.Attachment(
-				color = ColorBlendState.Attachment.Part(
-					src = BlendFactor.SrcAlpha,
-					dst = BlendFactor.OneMinusSrcAlpha,
-					op = BlendOp.Add
-				),
-				alpha = ColorBlendState.Attachment.Part(
-					src = BlendFactor.One,
-					dst = BlendFactor.Zero,
-					op = BlendOp.Add
-				)
-			)
-		)
-	).autoClose()
 
-	// make one framebuffer for each swapchain image
-	val framebuffers = swapchainImageViews
-		.map { swapchainImageView ->
-			device.framebuffer(
-				renderPass,
-				imageViews = listOf(swapchainImageView),
-				extent = swapchain.extent
-			).autoClose()
+		// make a graphics command buffer for each framebuffer
+		val renderCommandBuffers = (0 until framebuffers.size).map { i ->
+			commandPool.buffer().apply {
+
+				// draw the quad in a single render pass
+				begin(IntFlags.of(CommandBuffer.Usage.SimultaneousUse))
+				beginRenderPass(
+					renderPass,
+					framebuffers[i],
+					swapchain.rect,
+					mapOf(colorAttachment to ClearValue.Color.Float(0.8f, 0.8f, 0.8f))
+				)
+				bindPipeline(graphicsPipeline)
+				bindVertexBuffer(vertexBuf.buffer)
+				bindDescriptorSet(descriptorSets[i], graphicsPipeline)
+				draw(vertices = 4)
+				endRenderPass()
+				end()
+			}
 		}
 
-	// make a graphics command buffer for each framebuffer
-	val renderCommandBuffers = (0 until framebuffers.size).map { i ->
-		commandPool.buffer().apply {
+		// make semaphores for command buffer synchronization
+		val imageAvailable = device.semaphore().autoClose()
+		val renderFinished = device.semaphore().autoClose()
 
-			// draw the quad in a single render pass
-			begin(IntFlags.of(CommandBuffer.Usage.SimultaneousUse))
-			beginRenderPass(
-				renderPass,
-				framebuffers[i],
-				swapchain.rect,
-				mapOf(colorAttachment to ClearValue.Color.Float(0.8f, 0.8f, 0.8f))
+		fun render() {
+
+			// render a frame to the next image in the swapchain
+			val imageIndex = swapchain.acquireNextImage(imageAvailable)
+			graphicsQueue.submit(
+				renderCommandBuffers[imageIndex],
+				waitFor = listOf(Queue.WaitInfo(imageAvailable, IntFlags.of(PipelineStage.ColorAttachmentOutput))),
+				signalTo = listOf(renderFinished)
 			)
-			bindPipeline(graphicsPipeline)
-			bindVertexBuffer(vertexBuf.buffer)
-			bindDescriptorSet(descriptorSets[i], graphicsPipeline)
-			draw(vertices = 4)
-			endRenderPass()
-			end()
+
+			// present the swapchain image
+			surfaceQueue.present(
+				swapchain,
+				imageIndex,
+				waitFor = renderFinished
+			)
+			surfaceQueue.waitForIdle()
 		}
 	}
-
-	// make semaphores for command buffer synchronization
-	val imageAvailable = device.semaphore().autoClose()
-	val renderFinished = device.semaphore().autoClose()
+	var renderer = Renderer().autoClose()
 
 	// main loop
 	while (!win.shouldClose) {
 
 		Windows.pollEvents()
 
-		// render a frame to the next image in the swapchain
-		val imageIndex = swapchain.acquireNextImage(imageAvailable)
-		graphicsQueue.submit(
-			renderCommandBuffers[imageIndex],
-			waitFor = listOf(Queue.WaitInfo(imageAvailable, IntFlags.of(PipelineStage.ColorAttachmentOutput))),
-			signalTo = listOf(renderFinished)
-		)
+		try {
 
-		// present the swapchain image
-		surfaceQueue.present(
-			swapchain,
-			imageIndex,
-			waitFor = renderFinished
-		)
-		surfaceQueue.waitForIdle()
+			// finally!! render something!! =D =D =D
+			renderer.render()
+
+		} catch (ex: SwapchainOutOfDateException) {
+
+			// probably the window changed, need to re-create the renderer
+			device.waitForIdle()
+			renderer = Renderer(renderer.swapchain).autoClose(replace = renderer)
+		}
 	}
 
 	// wait for the device to finish before cleaning up

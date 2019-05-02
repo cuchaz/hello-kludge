@@ -3,10 +3,7 @@ package cuchaz.hellokludge.imgui
 import cuchaz.kludge.imgui.Commands.BeginFlags
 import cuchaz.kludge.imgui.Imgui
 import cuchaz.kludge.imgui.context
-import cuchaz.kludge.tools.Ref
-import cuchaz.kludge.tools.IntFlags
-import cuchaz.kludge.tools.autoCloser
-import cuchaz.kludge.tools.toFlagsString
+import cuchaz.kludge.tools.*
 import cuchaz.kludge.vulkan.*
 import cuchaz.kludge.window.Monitors
 import cuchaz.kludge.window.Size
@@ -72,125 +69,182 @@ fun main() = autoCloser {
 	val graphicsQueue = device.queues[graphicsFamily]!![0]
 	val surfaceQueue = device.queues[surfaceFamily]!![0]
 
-	// build the swapchain
-	val swapchain = physicalDevice.swapchainSupport(surface).run {
-		swapchain(
-			device,
-			surfaceFormat = find(Image.Format.B8G8R8A8_UNORM, Image.ColorSpace.SRGB_NONLINEAR)
-				?: surfaceFormats.first().also { println("using fallback surface format: $it") },
-			presentMode = find(PresentMode.Mailbox)
-				?: find(PresentMode.FifoRelaxed)
-				?: find(PresentMode.Fifo)
-				?: presentModes.first().also { println("using fallback present mode: $it") }
-		)
-	}.autoClose()
+	// init ImGUI
+	Imgui.load().autoClose()
+	println("ImGUI loaded, version ${Imgui.version}")
+	Imgui.context().autoClose()
 
-	// make the render pass
-	val colorAttachment =
-		Attachment(
-			format = swapchain.surfaceFormat.format,
-			loadOp = LoadOp.Clear,
-			storeOp = StoreOp.Store,
-			finalLayout = Image.Layout.PresentSrc
-		)
-	val subpass =
-		Subpass(
-			pipelineBindPoint = PipelineBindPoint.Graphics,
-			colorAttachments = listOf(
-				colorAttachment to Image.Layout.ColorAttachmentOptimal
+	class Renderer(oldSwapchain: Swapchain? = null) : AutoCloseable {
+
+		private val closer = AutoCloser()
+		private fun <R:AutoCloseable> R.autoClose() = also { closer.add(this@autoClose) }
+		override fun close() = closer.close()
+
+
+		// build the swapchain
+		val swapchain = physicalDevice.swapchainSupport(surface).run {
+			swapchain(
+				device,
+				surfaceFormat = find(Image.Format.B8G8R8A8_UNORM, Image.ColorSpace.SRGB_NONLINEAR)
+					?: surfaceFormats.first().also { println("using fallback surface format: $it") },
+				presentMode = find(PresentMode.Mailbox)
+					?: find(PresentMode.FifoRelaxed)
+					?: find(PresentMode.Fifo)
+					?: presentModes.first().also { println("using fallback present mode: $it") },
+				oldSwapchain = oldSwapchain
 			)
-		)
-	val renderPass = device
-		.renderPass(
-			attachments = listOf(colorAttachment),
-			subpasses = listOf(subpass),
-			subpassDependencies = listOf(
-				SubpassDependency(
-					src = Subpass.External.dependency(
-						stage = IntFlags.of(PipelineStage.ColorAttachmentOutput)
+		}.autoClose()
+
+		// make the render pass
+		val colorAttachment =
+			Attachment(
+				format = swapchain.surfaceFormat.format,
+				loadOp = LoadOp.Clear,
+				storeOp = StoreOp.Store,
+				finalLayout = Image.Layout.PresentSrc
+			)
+		val subpass =
+			Subpass(
+				pipelineBindPoint = PipelineBindPoint.Graphics,
+				colorAttachments = listOf(
+					colorAttachment to Image.Layout.ColorAttachmentOptimal
+				)
+			)
+		val renderPass = device
+			.renderPass(
+				attachments = listOf(colorAttachment),
+				subpasses = listOf(subpass),
+				subpassDependencies = listOf(
+					SubpassDependency(
+						src = Subpass.External.dependency(
+							stage = IntFlags.of(PipelineStage.ColorAttachmentOutput)
+						),
+						dst = subpass.dependency(
+							stage = IntFlags.of(PipelineStage.ColorAttachmentOutput),
+							access = IntFlags.of(Access.ColorAttachmentRead, Access.ColorAttachmentWrite)
+						)
+					)
+				)
+			).autoClose()
+
+		// make one framebuffer for each swapchain image in the render pass
+		val framebuffers = swapchain.images
+			.map { image ->
+				device.framebuffer(
+					renderPass,
+					imageViews = listOf(
+						image.view().autoClose()
 					),
-					dst = subpass.dependency(
-						stage = IntFlags.of(PipelineStage.ColorAttachmentOutput),
-						access = IntFlags.of(Access.ColorAttachmentRead, Access.ColorAttachmentWrite)
+					extent = swapchain.extent
+				).autoClose()
+			}
+
+		// make the graphics pipeline
+		val graphicsPipeline = device.graphicsPipeline(
+			renderPass,
+			stages = listOf(
+				device.shaderModule(Paths.get("build/shaders/helloworld/shader.vert.spv"))
+					.autoClose()
+					.stage("main", ShaderStage.Vertex),
+				device.shaderModule(Paths.get("build/shaders/helloworld/shader.frag.spv"))
+					.autoClose()
+					.stage("main", ShaderStage.Fragment)
+			),
+			inputAssembly = InputAssembly(InputAssembly.Topology.TriangleList),
+			rasterizationState = RasterizationState(
+				cullMode = IntFlags.of(CullMode.Back),
+				frontFace = FrontFace.Counterclockwise
+			),
+			viewports = listOf(swapchain.viewport),
+			scissors = listOf(swapchain.rect),
+			colorAttachmentBlends = mapOf(
+				colorAttachment to ColorBlendState.Attachment(
+					color = ColorBlendState.Attachment.Part(
+						src = BlendFactor.One,
+						dst = BlendFactor.Zero,
+						op = BlendOp.Add
+					),
+					alpha = ColorBlendState.Attachment.Part(
+						src = BlendFactor.One,
+						dst = BlendFactor.Zero,
+						op = BlendOp.Add
 					)
 				)
 			)
 		).autoClose()
 
-	// make one framebuffer for each swapchain image in the render pass
-	val framebuffers = swapchain.images
-		.map { image ->
-			device.framebuffer(
-				renderPass,
-				imageViews = listOf(
-					image.view().autoClose()
-				),
-				extent = swapchain.extent
-			).autoClose()
+		// make the descriptor pool
+		// 1000 of each is probably enough, right?
+		val descriptorPool = device.descriptorPool(
+			maxSets = 1000,
+			sizes = DescriptorType.Counts(
+				DescriptorType.values().map { type -> type to 1000 }
+			)
+		).autoClose()
+
+		// make a graphics command buffer for each framebuffer
+		val commandPool = device
+			.commandPool(
+				graphicsFamily,
+				flags = IntFlags.of(CommandPool.Create.ResetCommandBuffer)
+			)
+			.autoClose()
+		val commandBuffers = framebuffers.map { commandPool.buffer() }
+
+		// make semaphores for command buffer synchronization
+		val imageAvailable = device.semaphore().autoClose()
+		val renderFinished = device.semaphore().autoClose()
+
+		// TODO: is this the right place for this?
+		init {
+			Imgui.init(win, graphicsQueue, descriptorPool, renderPass)
+			Imgui.initFonts()
 		}
 
-	// make the graphics pipeline
-	val graphicsPipeline = device.graphicsPipeline(
-		renderPass,
-		stages = listOf(
-			device.shaderModule(Paths.get("build/shaders/helloworld/shader.vert.spv"))
-				.autoClose()
-				.stage("main", ShaderStage.Vertex),
-			device.shaderModule(Paths.get("build/shaders/helloworld/shader.frag.spv"))
-				.autoClose()
-				.stage("main", ShaderStage.Fragment)
-		),
-		inputAssembly = InputAssembly(InputAssembly.Topology.TriangleList),
-		rasterizationState = RasterizationState(
-			cullMode = IntFlags.of(CullMode.Back),
-			frontFace = FrontFace.Counterclockwise
-		),
-		viewports = listOf(swapchain.viewport),
-		scissors = listOf(swapchain.rect),
-		colorAttachmentBlends = mapOf(
-			colorAttachment to ColorBlendState.Attachment(
-				color = ColorBlendState.Attachment.Part(
-					src = BlendFactor.One,
-					dst = BlendFactor.Zero,
-					op = BlendOp.Add
-				),
-				alpha = ColorBlendState.Attachment.Part(
-					src = BlendFactor.One,
-					dst = BlendFactor.Zero,
-					op = BlendOp.Add
+		fun render() {
+
+			// get the next frame info
+			val imageIndex = swapchain.acquireNextImage(imageAvailable)
+			val framebuffer = framebuffers[imageIndex]
+			val commandBuffer = commandBuffers[imageIndex]
+
+			// record the command buffer every frame
+			commandBuffer.apply {
+
+				begin(IntFlags.of(CommandBuffer.Usage.OneTimeSubmit))
+				beginRenderPass(
+					renderPass,
+					framebuffer,
+					swapchain.rect,
+					mapOf(colorAttachment to ClearValue.Color.Float(0.0f, 0.0f, 0.0f))
 				)
+
+				// draw our triangle
+				bindPipeline(graphicsPipeline)
+				draw(vertices = 3)
+
+				// draw the GUI
+				Imgui.draw(this)
+
+				endRenderPass()
+				end()
+			}
+
+			// render the frame
+			graphicsQueue.submit(
+				commandBuffers[imageIndex],
+				waitFor = listOf(Queue.WaitInfo(imageAvailable, IntFlags.of(PipelineStage.ColorAttachmentOutput))),
+				signalTo = listOf(renderFinished)
 			)
-		)
-	).autoClose()
-
-	// make the descriptor pool
-	// 1000 of each is probably enough, right?
-	val descriptorPool = device.descriptorPool(
-		maxSets = 1000,
-		sizes = DescriptorType.Counts(
-			DescriptorType.values().map { type -> type to 1000 }
-		)
-	).autoClose()
-
-	// init ImGUI
-	Imgui.load().autoClose()
-	println("ImGUI loaded, version ${Imgui.version}")
-	Imgui.context().autoClose()
-	Imgui.init(win, graphicsQueue, descriptorPool, renderPass)
-	Imgui.initFonts()
-
-	// make a graphics command buffer for each framebuffer
-	val commandPool = device
-		.commandPool(
-			graphicsFamily,
-			flags = IntFlags.of(CommandPool.Create.ResetCommandBuffer)
-		)
-		.autoClose()
-	val commandBuffers = framebuffers.map { commandPool.buffer() }
-
-	// make semaphores for command buffer synchronization
-	val imageAvailable = device.semaphore().autoClose()
-	val renderFinished = device.semaphore().autoClose()
+			surfaceQueue.present(
+				swapchain,
+				imageIndex,
+				waitFor = renderFinished
+			)
+			surfaceQueue.waitForIdle()
+		}
+	}
+	var renderer = Renderer().autoClose()
 
 	// GUI state
 	val winOpen = Ref.of(true)
@@ -260,47 +314,17 @@ fun main() = autoCloser {
 			}
 		}
 
-		// get the next frame info
-		val imageIndex = swapchain.acquireNextImage(imageAvailable)
-		val framebuffer = framebuffers[imageIndex]
-		val commandBuffer = commandBuffers[imageIndex]
+		try {
 
-		// record the command buffer every frame
-		commandBuffer.apply {
+			// finally!! render something!! =D =D =D
+			renderer.render()
 
-			begin(IntFlags.of(CommandBuffer.Usage.OneTimeSubmit))
-			beginRenderPass(
-				renderPass,
-				framebuffer,
-				swapchain.rect,
-				mapOf(colorAttachment to ClearValue.Color.Float(0.0f, 0.0f, 0.0f))
-			)
+		} catch (ex: SwapchainOutOfDateException) {
 
-			// draw our triangle
-			bindPipeline(graphicsPipeline)
-			draw(vertices = 3)
-
-			// draw the GUI
-			Imgui.draw(this)
-
-			endRenderPass()
-			end()
+			// probably the window changed, need to re-create the renderer
+			device.waitForIdle()
+			renderer = Renderer(renderer.swapchain).autoClose(replace = renderer)
 		}
-
-		// render the frame
-		graphicsQueue.submit(
-			commandBuffers[imageIndex],
-			waitFor = listOf(Queue.WaitInfo(imageAvailable, IntFlags.of(PipelineStage.ColorAttachmentOutput))),
-			signalTo = listOf(renderFinished)
-		)
-		surfaceQueue.present(
-			swapchain,
-			imageIndex,
-			waitFor = renderFinished
-		)
-		surfaceQueue.waitForIdle()
-
-		// TODO: measure FPS?
 	}
 
 	// wait for the device to finish before cleaning up
