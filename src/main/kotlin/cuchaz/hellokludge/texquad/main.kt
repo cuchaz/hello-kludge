@@ -142,18 +142,20 @@ fun main() = autoCloser {
 		.autoClose()
 		.allocateDevice()
 		.autoClose()
-		.transferHtoD { buf ->
+		.apply {
+			transferHtoD { buf ->
 
-			// make two ccw triangles in a fan
-			// in clip space
-			// with texture coords
-			buf.putFloats(
-				-1.0f,  1.0f,  0.0f, 1.0f, // lower left
-				1.0f,  1.0f,  1.0f, 1.0f, // lower right
-				1.0f, -1.0f,  1.0f, 0.0f, // upper right
-				-1.0f, -1.0f,  0.0f, 0.0f // upper left
-			)
-			buf.flip()
+				// make two ccw triangles in a fan
+				// in clip space
+				// with texture coords
+				buf.putFloats(
+					-1.0f,  1.0f,  0.0f, 1.0f, // lower left
+					1.0f,  1.0f,  1.0f, 1.0f, // lower right
+					1.0f, -1.0f,  1.0f, 0.0f, // upper right
+					-1.0f, -1.0f,  0.0f, 0.0f // upper left
+				)
+				buf.flip()
+			}
 		}
 
 	class Renderer(oldSwapchain: Swapchain? = null) : AutoCloseable {
