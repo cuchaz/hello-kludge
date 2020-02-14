@@ -4,23 +4,27 @@ import cuchaz.kludge.tools.IntFlags
 import cuchaz.kludge.tools.autoCloser
 import cuchaz.kludge.tools.toFlagsString
 import cuchaz.kludge.vulkan.*
+import cuchaz.kludge.window.Windows
 import java.nio.file.Paths
 
 
 fun main() = autoCloser {
 
 	// make the main vulkan instance with the extensions we need
+	val canDebug = Vulkan.DebugExtension in Vulkan.supportedExtensions
 	val vulkan = Vulkan(
-		extensionNames = setOf(Vulkan.DebugExtension),
+		extensionNames = (setOf(Vulkan.DebugExtension).takeIf { canDebug } ?: emptySet()),
 		layerNames = setOf(Vulkan.StandardValidationLayer)
 	).autoClose()
 
-	// listen to problems from vulkan
-	vulkan.debugMessenger(
-		severities = IntFlags.of(DebugMessenger.Severity.Error, DebugMessenger.Severity.Warning)
-	) { severity, type, msg ->
-		println("VULKAN: ${severity.toFlagsString()} ${type.toFlagsString()} $msg")
-	}.autoClose()
+	// listen to problems from vulkan, if possible
+	if (canDebug) {
+		vulkan.debugMessenger(
+			severities = IntFlags.of(DebugMessenger.Severity.Error, DebugMessenger.Severity.Warning)
+		) { severity, type, msg ->
+			println("VULKAN: ${severity.toFlagsString()} ${type.toFlagsString()} $msg")
+		}.autoClose()
+	}
 
 	// pick a physical device: prefer discrete GPU
 	val physicalDevice = vulkan.physicalDevices

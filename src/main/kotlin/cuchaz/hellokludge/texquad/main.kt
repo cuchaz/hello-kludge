@@ -23,22 +23,27 @@ fun main() = autoCloser {
 	Windows.errors.setOut(System.err)
 
 	// make the main vulkan instance with the extensions we need
+	val canDebug = Vulkan.DebugExtension in Vulkan.supportedExtensions
 	val vulkan = Vulkan(
-		extensionNames = Windows.requiredVulkanExtensions + setOf(Vulkan.DebugExtension),
+		extensionNames = Windows.requiredVulkanExtensions +
+			(setOf(Vulkan.DebugExtension).takeIf { canDebug } ?: emptySet()),
 		layerNames = setOf(Vulkan.StandardValidationLayer)
 	).autoClose()
 
-	// listen to problems from vulkan
-	vulkan.debugMessenger(
-		severities = IntFlags.of(DebugMessenger.Severity.Error, DebugMessenger.Severity.Warning)
-	) { severity, type, msg ->
-		println("VULKAN: ${severity.toFlagsString()} ${type.toFlagsString()} $msg")
-	}.autoClose()
+	// listen to problems from vulkan, if possible
+	if (canDebug) {
+		vulkan.debugMessenger(
+			severities = IntFlags.of(DebugMessenger.Severity.Error, DebugMessenger.Severity.Warning)
+		) { severity, type, msg ->
+			println("VULKAN: ${severity.toFlagsString()} ${type.toFlagsString()} $msg")
+		}.autoClose()
+	}
 
 	// read an image
 	val cpuImage = javaClass.getResourceAsStream("/texquad/vulkan.png").use { instream ->
 		ImageIO.read(instream)
 	}
+	// TODO: this doesn't work on some platforms... need to copy bytes using row pitch
 	val cpuImageBytes = (cpuImage.raster.dataBuffer as DataBufferByte).data
 
 	// make a window that matches the image size
