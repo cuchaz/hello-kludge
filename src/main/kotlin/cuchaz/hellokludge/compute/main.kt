@@ -14,7 +14,11 @@ fun main() = autoCloser {
 	val canDebug = Vulkan.DebugExtension in Vulkan.supportedExtensions
 	val vulkan = Vulkan(
 		extensionNames = (setOf(Vulkan.DebugExtension).takeIf { canDebug } ?: emptySet()),
-		layerNames = setOf(Vulkan.StandardValidationLayer)
+		layerNames = if (Vulkan.StandardValidationLayer in Vulkan.supportedLayers) {
+				setOf(Vulkan.StandardValidationLayer)
+			} else {
+				emptySet()
+			}
 	).autoClose()
 
 	// listen to problems from vulkan, if possible

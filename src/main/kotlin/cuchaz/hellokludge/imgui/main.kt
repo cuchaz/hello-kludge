@@ -31,7 +31,11 @@ fun main() = autoCloser {
 	val vulkan = Vulkan(
 		extensionNames = Windows.requiredVulkanExtensions +
 			(setOf(Vulkan.DebugExtension).takeIf { canDebug } ?: emptySet()),
-		layerNames = setOf(Vulkan.StandardValidationLayer)
+		layerNames = if (Vulkan.StandardValidationLayer in Vulkan.supportedLayers) {
+				setOf(Vulkan.StandardValidationLayer)
+			} else {
+				emptySet()
+			}
 	).autoClose()
 
 	// listen to problems from vulkan, if possible
