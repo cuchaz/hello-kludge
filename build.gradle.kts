@@ -2,7 +2,7 @@ import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 
 plugins {
-	kotlin("jvm") version "1.3.20-eap-52"
+	kotlin("jvm") version "1.5.0"
 }
 
 
@@ -10,13 +10,12 @@ group = "cuchaz"
 version = "0.1"
 
 repositories {
-	maven("https://dl.bintray.com/kotlin/kotlin-eap")
-	jcenter()
+	mavenCentral()
 }
 
 dependencies {
-	compile(kotlin("stdlib-jdk8"))
-	compile("cuchaz:kludge")
+	implementation(kotlin("stdlib-jdk8"))
+	implementation("com.cuchazinteractive:kludge")
 }
 
 configure<JavaPluginConvention> {
@@ -24,14 +23,9 @@ configure<JavaPluginConvention> {
 }
 
 tasks.withType<KotlinCompile> {
-
 	kotlinOptions {
-
 		jvmTarget = "1.8"
-
-		// enable experimental features
-		languageVersion = "1.3"
-		freeCompilerArgs += "-XXLanguage:+InlineClasses"
+		languageVersion = "1.5"
 	}
 }
 
